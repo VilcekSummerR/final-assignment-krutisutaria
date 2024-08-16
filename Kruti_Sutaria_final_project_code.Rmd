@@ -1,28 +1,463 @@
 ---
-title: "Kruti Sutaria final project"
+title: "Using metabolomics for diagnosis and prognosis of Gastric Cancer"
 output: html_notebook
 ---
 
-This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
-
-Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
-
 ```{r setup, include=FALSE}
 
+#All packages used in this analysis found here
+
 knitr::opts_chunk$set(echo = TRUE)
-
-#install.packages("xlsx")
-#library(readxl)
-
-patient_raw_data_1 <- read.csv("https://raw.githubusercontent.com/VilcekSummerR/final-assignment-krutisutaria/Data_for_study/Gastric_cancer_metabolomic_data.csv")
-
-```
+library(tidyverse)
+library(dplyr)
+library(pheatmap)
+library(DT)
+library(data.table)
 
 ```
 
-Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
+Data set from collection of liquid chromatography mass spectrometry (LC-MS)-based targeted metabolomics
 
-When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file). 
+The patient metabolome datafile includes 281 healthy normal patients and 145 patients that have been diagnosed with gastic cancers. In total 147 metabolites including amino acids, organic acids, nucleotides, nucleosides, vitamins, acylcarnitines, amines, and carbohydrates were measured and recorded
 
-The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+The cohort information is a datafile with information on the cohort of cancer patients in the patient metabolome and has information on the stage of their cancer
 
+```{r}
+
+# Patient metabolome datafile
+
+patient_metabolome <- read.csv("https://raw.githubusercontent.com/VilcekSummerR/final-assignment-krutisutaria/Data_for_study/Gastric_cancer_metabolomic_data.csv")
+
+cohort_information <- read.csv("https://raw.githubusercontent.com/VilcekSummerR/final-assignment-krutisutaria/Data_for_study/cohort_information.csv")
+
+```
+
+Explore the data / clean the data
+
+Ensured all the column names were properly descriptive of the data they measured. Noticed first column wasn't properly named so added a descriptive name to it
+
+Additionally, changed the designation of healthy and cancer patients in the data set (indicated by N and P, respectively) to more intuitive labels
+
+Checked to see if there were any NAs in the dataset (there weren't any in this dataset so didn't need to have to consider removing any patients from the cohort)
+
+
+```{r}
+
+colnames(patient_metabolome)[1] <- "Batch_patient_ID"
+
+num_na <- anyNA(patient_metabolome)
+
+patient_metabolome <- patient_metabolome %>%
+  mutate(type = recode(type,
+                           "P" = "Cancer",
+                           "N" = "Normal"))
+
+```
+
+
+The stage of disease of cancer patients from the cohort information datafile is being added to the patient metabolome dataframe in column "stage_of_disease"
+
+Because only cancer patients are in the cohort information, there are patient IDs rows in the metabolome dataframe that are not in the cohort information file. For patient IDs with no corresponding values in the cohort info file, the value in new column "stage_of_disease" will be "_No_cancer"
+
+
+```{r}
+
+# Adding new column to patient_metabolome with stage of disease for cancer patients and "_No_cancer" for healthy patients
+
+patient_metabolome <- merge(patient_metabolome, cohort_information[,c("sample_id","stage")], by = "sample_id", all.x = TRUE)
+
+# Renaming the 'stage' column to 'Stage_of_disease'
+
+colnames(patient_metabolome)[which(names(patient_metabolome) == "stage")] <- "stage_of_disease"
+
+# Replace NA values with '_No_cancer'
+
+patient_metabolome$stage_of_disease[is.na(patient_metabolome$stage_of_disease)] <- '_No_cancer'
+
+
+# Make copy of metabolome not scaled for relative gene expression analysis later in the workflow
+
+original_patient_metabolome <- patient_metabolome
+
+
+```
+
+A table of number of patients in cohort by by stage of disease
+
+```{r}
+
+# Convert data frame to a data table 
+
+DT_patient_metabolome <- setDT(patient_metabolome)
+
+stage_counts <- DT_patient_metabolome[, .N, by=stage_of_disease]
+setnames(stage_counts, c("Stage of cancer", "Patient count"))
+
+table1 <- datatable(stage_counts)
+
+print(table1)
+```
+
+
+Because there are so few patients in the stage IA and IB of cancer, to increase strength of analysis in later comparison, I combine all patients in stage IA and IB to I
+
+```{r}
+
+patient_metabolome$stage_of_disease[patient_metabolome$stage_of_disease == "IA"] <- "I"
+
+patient_metabolome$stage_of_disease[patient_metabolome$stage_of_disease == "IB"] <- "I"
+
+```
+
+
+Across 147 metabolites, there is a range of means and variances so needed to normalize the data (mean is equal to 0 and sd is 1). Created for loop to normalize columns with values of metabolites
+
+Split data set into one dataframe for cancer patients and another for healthy patients to enable seamless calculations
+
+```{r}
+
+# Scaling columns with numeric values of the metabolites to have mean equal to 0 and standard deviation equal to 1
+
+numeric_columns <- sapply(patient_metabolome, is.numeric)
+
+
+for (col in names(patient_metabolome[numeric_columns])) {
+  value <- patient_metabolome[[col]]
+  normalize_col <- (value - mean(value))/sd(value)
+  patient_metabolome[[col]] <- normalize_col
+}
+
+cancer_metabolome <- patient_metabolome %>% filter(type == "Cancer")
+healthy_metabolome <- patient_metabolome %>% filter(type == "Normal")
+
+```
+
+
+Running Wilcoxon rank-sum test to find statistically significant metabolomes between the gastric cancer and non gastric cancer control groups
+
+Out of the 147 metabolites measured, there are 96 metabolites that are significantly different between cancer and healthy patients
+
+
+```{r}
+
+# Isolating the numeric columns (columns containing values for the metabolome measurements) for cancer and normal patient dataframes
+
+num_cols_cancer_metabolome <- cancer_metabolome %>%
+  select_if(is.numeric)
+
+num_cols_healthy_metabolome <- healthy_metabolome %>%
+  select_if(is.numeric)
+
+# Finding the mean of all metabolomes in cancer patients vs normal patients  
+
+cancer_metabolome_mean <- colMeans(num_cols_cancer_metabolome, na.rm = TRUE)
+
+healthy_metabolome_mean <- colMeans(num_cols_healthy_metabolome, na.rm = TRUE)
+
+# Next step is to add means of the cancer and non-cancer group to a summary dataframe
+
+metabolome_summary <- cancer_metabolome_mean
+metabolome_summary <- rbind(metabolome_summary, healthy_metabolome_mean)
+
+rownames(metabolome_summary) <- c("cancer_metabolome_mean","health_metabolome_mean")
+
+# Calculating the Wilcoxon rank-sum test for each metabolite across the cancer and non-cancer group
+
+p_values <- numeric()
+
+col_test <- names(num_cols_cancer_metabolome)
+
+for (col in col_test){
+  wilcox <- wilcox.test(num_cols_cancer_metabolome[[col]],num_cols_healthy_metabolome[[col]])
+  p_values <- c(p_values, wilcox$p.value)
+}
+
+#Add p-values of metabolites to the summary dataframe
+
+metabolome_summary <- rbind(metabolome_summary, p_values)
+
+# Counting the number of metabolites that are significantly different between cancer and normal patients
+
+sig_metabolites <- sum (p_values <0.01)
+
+print(sig_metabolites)
+```
+
+Looking at box-plot of 10 most significantly different metabolites (metabolites where the Wilcoxon rank sum test yielded the lowest values)
+
+```{r}
+
+# Find metabolites that have the lowest p values
+
+p_values_extract <- metabolome_summary["p_values",]
+ordered_metabolites <- names(p_values_extract)[order(p_values_extract)]
+
+# Convert from wide to long format for genes with lowest 10 P values
+
+metabolites_long <- patient_metabolome %>%
+  pivot_longer(
+    cols = c(ordered_metabolites[1:10]),
+    names_to = "Gene",
+    values_to = "Expression"
+  )
+
+ggplot(metabolites_long, aes(x = Gene, y = Expression, fill = type)) +
+  geom_boxplot(outlier.shape= NA) +
+  labs(Title = "Boxplot of metabolites", x = "Gene", y="Expression") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust =0.5, hjust = 1, size = 5)) +
+  ylim(0,3)
+
+```
+
+Examining which metabolites are overexpressed and underexpressed in cancer patients vs healthy patients. This is calculated by taking the quotient of the average expression level of a gene for cancer patients and average expression level for normal patients (have to use the original data, not the z-transformed data)
+
+If the fold change is greater than 1.25, the metabolite is considered to be overexpressed in cancer patients and if the fold change is less than 0.75, then gene is underexpressed 
+
+There are 22 metabolites that are overexpressed and 19 metabolites that are underexpressed
+
+Relative metabolite expression values and categorical labels are added to the summary metabolite data 
+
+```{r}
+
+# Split original data into cancer and healthy patients
+
+cancer_metabolome_og <- original_patient_metabolome %>% filter(type == "Cancer")
+healthy_metabolome_og <- original_patient_metabolome %>% filter(type == "Normal")
+
+# Create for loop that goes through all the numeric rows of the dataframe (which are all the columns with metabolite expression data) and takes the quotient of mean expression of metabolites for cancer patients vs normal patients
+
+relative_expression <- numeric() 
+
+for (col in names(patient_metabolome[numeric_columns])) {
+  mean_cancer <- mean(cancer_metabolome_og[[col]])
+  mean_healthy <- mean(healthy_metabolome_og[[col]])
+  relative_expression_difference <- mean_cancer / mean_healthy
+  relative_expression <- rbind(relative_expression,relative_expression_difference)
+}
+
+relative_expression <- as.vector(relative_expression)
+
+metabolome_summary <- rbind(metabolome_summary, relative_expression)
+
+# Tranform summary of metabolites to dataframe
+
+df_metabolome_summary <- as.data.frame(t(metabolome_summary))
+
+# Create new column in dataframe where metabolites are defined as overexpression, underexpression and no change by the fold change difference in expression between cancer vs non cancer patients 
+
+df_metabolome_summary$Expression_status <- ifelse(df_metabolome_summary$relative_expression > 1.25,
+                                                  "Overexpression",
+                                                  ifelse(df_metabolome_summary$relative_expression < 0.75,
+                                                         "Underexpression",
+                                                         "No change"))
+
+# Finding the total number of metabolites that are overexpressed and underexpressed 
+
+count_overexpressed <- sum(df_metabolome_summary$Expression_status == "Overexpression")
+
+count_underexpressed <- sum(df_metabolome_summary$Expression_status == "Underexpression")
+
+print(paste0("Number of overexpressed metabolites: ",count_overexpressed))
+print(paste0("Number of underexpressed metabolites: ",count_underexpressed))
+```
+
+Creating scatterplot of metabolites by viewing relative expression of metabolites and the statistical signifance in the difference between healthy and cancer patients
+
+
+```{r}
+
+#Log base 2 transform relative expression because range of values is too wide for visualization
+
+df_metabolome_summary$log_relative_expression <- log2(df_metabolome_summary$relative_expression)
+
+#Negative log base 10 transform p-value to "stretch out" p-values to really see which values are significant and which are not. Also want values that are higher on the y-axis to represent metabolites which are more significantly differentiated
+
+df_metabolome_summary$log_p_values <- -log10(df_metabolome_summary$p_values)
+
+# Creating scatterplot of metabolites based on p-value and relative expression
+
+ggplot(df_metabolome_summary, aes(x= log_relative_expression, y = log_p_values, color = Expression_status))+
+  geom_point(size=3) +
+  labs(title = "Scatter Plot of Metabolites",
+       x = "Log transformed relative cancer vs normal expression of metabolites",
+       y = "Log-transformed p-values") +
+  theme_minimal()
+
+```
+
+
+Bubble plot of 10 most overexpressed metabolites in cancer vs healthy patients
+
+
+```{r}
+
+top_expressed <- df_metabolome_summary[order(-df_metabolome_summary$log_relative_expression),][1:10,]
+
+ggplot(top_expressed, aes(x = log_relative_expression, y = reorder(rownames(top_expressed), log_relative_expression))) +
+  geom_point(alpha = 0.7, size = 7) +
+  labs(
+    x = "Relative expression of metabolites",
+    y = "Metabolites",
+    title = "Top 10 Overexpressed Metabolites"
+  ) +
+  theme(
+    plot.title = element_text(hjust=0.5),
+    axis.title.x = element_text(hjust=0.5),
+    axis.title.y = element_text(hjust=0.5)
+  )
+
+
+```
+
+
+For top 10 overexpressed metabolites, examining if the expression varies by stage of disease. First examination is looking at the mean of expression by stage of cancer (No cancer, I, II, III, IV)
+
+```{r}
+
+
+
+```
+
+
+
+Examining a heat map of the correlation (using Pearson) between metabolites. One heatmap for correlation in cancer patients and separate heatmap for healthy patients
+
+```{r}
+
+# Isolating the numeric columns (columns containing values for the metabolome measurements) for original cancer and normal patient dataframes
+
+num_cols_cancer_metabolome_og <- cancer_metabolome_og %>%
+  select_if(is.numeric)
+
+num_cols_healthy_metabolome_og <- healthy_metabolome_og %>%
+  select_if(is.numeric)
+
+# Creating heatmap of correlation between metabolites in cancer patients
+
+cor_matrix_cancer <- cor(num_cols_cancer_metabolome)
+
+pheatmap(cor_matrix_cancer,
+         color = colorRampPalette(c("blue", "white", "red"))(50),
+         main = "Heatmap of Correlation between Metabolites in Cancer Patients",
+         fontsize_col = 2,
+         fontsize_row = 2)
+
+# Creating heatmap of correlation between metabolites in healthy patients
+
+cor_matrix_healthy <- cor(num_cols_healthy_metabolome)
+
+pheatmap(cor_matrix_healthy,
+         color = colorRampPalette(c("blue", "white", "red"))(50),
+         main = "Heatmap of Correlation between Metabolites in Healthy Patients",
+         fontsize_col = 2,
+         fontsize_row = 2)
+
+```
+
+
+From the heatmaps it seems like there are different sets of metabolites that are coorelated between the cancer patients and normal patients. 
+
+The hypothesis here is that in healthy individuals, metabolic pathways are well-regulated and function optimally to maintain homeostasis, and the metabolites would reflect that. In cancer patients, cancer cells typically have altered energy metabolism, such as increased glycolysis and changes in amino acid metabolism 
+
+The next test I run is looking to how many metabolite combinations yield a significant correlation in cancer patients but not in healthy patients, and vice versa 
+
+There are 3132 combination of metabolites where the correlation between two metabolites is significant for cancer patients but not for healthy patients, or vice versa
+
+```{r}
+
+# Initialize a list to store name of combination of metabolites that are significantly correlated in cancer patients but not healthy patients, and vice versa 
+
+results_correlation <- list()
+
+max_difference <- 0
+max_diff_names <- list()
+
+metabolite_names <- colnames(num_cols_cancer_metabolome_og)
+
+# Nested for loop to iterate over each pair of metabolite calculating the pearson correlation and then finding the p value
+
+for (i in 1:(length(metabolite_names) - 1)) {
+  for (j in (i + 1):length(metabolite_names)) {
+    metabolite1 <- metabolite_names[i]
+    metabolite2 <- metabolite_names[j]
+   
+    # Perform correlation test for cancer patients
+    test_result_cancer <- cor.test(num_cols_cancer_metabolome_og[[metabolite1]], num_cols_cancer_metabolome_og[[metabolite2]])
+    
+    p_value_cancer <- ifelse(test_result_cancer$p.value < 0.01, "Significant", "Not Significant")
+                             
+    # Perform correlation test for healthy patients
+    test_result_healthy <- cor.test(num_cols_healthy_metabolome_og[[metabolite1]], num_cols_healthy_metabolome_og[[metabolite2]])
+    
+    p_value_healthy <- ifelse(test_result_healthy$p.value < 0.01, "Significant", "Not Significant")
+    
+    diff_p_value <- abs(test_result_cancer$p.value - test_result_healthy$p.value)
+                              
+    # If there is a mismatch in significance, then store the value in results
+    
+    if (p_value_cancer != p_value_healthy) {
+      combo <- c(metabolite1,metabolite2)
+      results_correlation <- append(results_correlation, list(combo))
+      
+      #find biggest difference in p values
+      if (diff_p_value > max_difference) {
+        max_difference <- diff_p_value
+        max_diff_names <- list(combo)
+      }
+    }
+  }
+}
+
+print(paste0("There are ", length(results_correlation), " combination of metabolites where the correlation between two metabolites is significant for cancer patients but not for healthy patients, or vice versa"))
+
+```
+
+To demonstrate the difference in significance in correlation in two metabolites in cancer patients vs healthy patients, I use a scatterplot to explore the relationships of metabolites that have the highest degree of difference in p value between cancer patients and healthy patients.
+
+The two metabolites with the greatest difference in p values are Arginine.038 and Pyroglumatic acid.072. There is a significant correlation between these two metabolites for healthy patients (p value is 1.23e-16) and no significant correlation between these metabolites for cancer patients (p value is 0.99)
+
+```{r}
+
+# Two metabolites that have varying significance between cancer and healthy patients
+
+metabolite1 <- max_diff_names[[1]][[1]]
+metabolite2 <- max_diff_names[[1]][[2]]
+
+print(metabolite1)
+print(metabolite2)
+
+# The correlation value for metabolite 1 and 2 in cancer patients vs healthy patients
+
+test_result_cancer <- cor.test(num_cols_cancer_metabolome_og[[metabolite1]], num_cols_cancer_metabolome_og[[metabolite2]])
+    
+p_value_cancer <- test_result_cancer$p.value
+                             
+test_result_healthy <- cor.test(num_cols_healthy_metabolome_og[[metabolite1]], num_cols_healthy_metabolome_og[[metabolite2]])
+    
+p_value_healthy <- test_result_healthy$p.value 
+
+print(p_value_cancer)
+print(p_value_healthy)
+
+# Creating scatterplot of metabolites and labeling based on health status
+
+ggplot(patient_metabolome, aes(x= Arginine_pos.038, y = Pyroglutamic.acid_neg.072, color = type))+
+  geom_point() +
+  labs(title = "Scatter Plot of Metabolites") +
+  theme_minimal()+
+  xlim(-2,2)+
+  ylim(-2,2)
+
+
+```
+
+
+
+```{r}
+
+```
+
+
+
+\`\`\` Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
