@@ -1,6 +1,8 @@
 ---
 title: "Using metabolomics for diagnosis and prognosis of Gastric Cancer"
-output: html_notebook
+output:
+  slidy_presentation:
+    css: styles.css
 ---
 
 ```{r setup, include=FALSE}
@@ -16,9 +18,11 @@ library(data.table)
 
 ```
 
+## Background / context
+
 Data set from collection of liquid chromatography mass spectrometry (LC-MS)-based targeted metabolomics
 
-The patient metabolome datafile includes 281 healthy normal patients and 145 patients that have been diagnosed with gastic cancers. In total 147 metabolites including amino acids, organic acids, nucleotides, nucleosides, vitamins, acylcarnitines, amines, and carbohydrates were measured and recorded
+The patient metabolome datafile includes 281 healthy normal patients and 145 patients that have been diagnosed with gastric cancers. In total 147 metabolites including amino acids, organic acids, nucleotides, nucleosides, vitamins, acylcarnitines, amines, and carbohydrates were measured and recorded
 
 The cohort information is a datafile with information on the cohort of cancer patients in the patient metabolome and has information on the stage of their cancer
 
@@ -32,14 +36,13 @@ cohort_information <- read.csv("https://raw.githubusercontent.com/VilcekSummerR/
 
 ```
 
-Explore the data / clean the data
+## Methods: Explore the data / clean the data
 
 Ensured all the column names were properly descriptive of the data they measured. Noticed first column wasn't properly named so added a descriptive name to it
 
 Additionally, changed the designation of healthy and cancer patients in the data set (indicated by N and P, respectively) to more intuitive labels
 
 Checked to see if there were any NAs in the dataset (there weren't any in this dataset so didn't need to have to consider removing any patients from the cohort)
-
 
 ```{r}
 
@@ -54,11 +57,11 @@ patient_metabolome <- patient_metabolome %>%
 
 ```
 
+## Methods: Combine multiple datasets
 
 The stage of disease of cancer patients from the cohort information datafile is being added to the patient metabolome dataframe in column "stage_of_disease"
 
 Because only cancer patients are in the cohort information, there are patient IDs rows in the metabolome dataframe that are not in the cohort information file. For patient IDs with no corresponding values in the cohort info file, the value in new column "stage_of_disease" will be "_No_cancer"
-
 
 ```{r}
 
@@ -82,7 +85,9 @@ original_patient_metabolome <- patient_metabolome
 
 ```
 
-A table of number of patients in cohort by by stage of disease
+## Methods: Overview of patient cohorts in dataset
+
+A summary table of number of patients in cohort by by stage of disease
 
 ```{r}
 
@@ -98,8 +103,9 @@ table1 <- datatable(stage_counts)
 print(table1)
 ```
 
+## Methods: Combining patient cohorts to improve analysis
 
-Because there are so few patients in the stage IA and IB of cancer, to increase strength of analysis in later comparison, I combine all patients in stage IA and IB to I
+Because there are so few patients in the stage IA (45 patients) and IB (7 patients) of cancer, to increase strength of analysis in later comparison, I combine all patients in stage IA and IB to stage I
 
 ```{r}
 
@@ -109,8 +115,9 @@ patient_metabolome$stage_of_disease[patient_metabolome$stage_of_disease == "IB"]
 
 ```
 
+## Methods: Normalizing data for analysis
 
-Across 147 metabolites, there is a range of means and variances so needed to normalize the data (mean is equal to 0 and sd is 1). Created for loop to normalize columns with values of metabolites
+Across 147 metabolites, there is a range of means and variances so needed to normalize the data (mean is equal to 0 and sd is 1). Created for loop to normalize columns with values of the expression of 147 metabolites
 
 Split data set into one dataframe for cancer patients and another for healthy patients to enable seamless calculations
 
@@ -120,23 +127,26 @@ Split data set into one dataframe for cancer patients and another for healthy pa
 
 numeric_columns <- sapply(patient_metabolome, is.numeric)
 
-
-for (col in names(patient_metabolome[numeric_columns])) {
-  value <- patient_metabolome[[col]]
-  normalize_col <- (value - mean(value))/sd(value)
-  patient_metabolome[[col]] <- normalize_col
+for (i in 1:length(numeric_columns)) {
+  if (numeric_columns[[i]]==TRUE) {
+    value <- patient_metabolome[[i]]
+    normalize_col <- (value - mean(value))/sd(value)
+    patient_metabolome[[i]] <- normalize_col
+  }
 }
+
+# Splitting patient dataframe into two. One dataframe for cancer patients and another dataframe for normal patients
 
 cancer_metabolome <- patient_metabolome %>% filter(type == "Cancer")
 healthy_metabolome <- patient_metabolome %>% filter(type == "Normal")
 
 ```
 
+## Results: Identify statistically significant metabolites
 
 Running Wilcoxon rank-sum test to find statistically significant metabolomes between the gastric cancer and non gastric cancer control groups
 
 Out of the 147 metabolites measured, there are 96 metabolites that are significantly different between cancer and healthy patients
-
 
 ```{r}
 
@@ -183,6 +193,8 @@ sig_metabolites <- sum (p_values <0.01)
 print(sig_metabolites)
 ```
 
+## Results: Evaluate mean of 10 most statistically significant metabolites
+
 Looking at box-plot of 10 most significantly different metabolites (metabolites where the Wilcoxon rank sum test yielded the lowest values)
 
 ```{r}
@@ -197,26 +209,33 @@ ordered_metabolites <- names(p_values_extract)[order(p_values_extract)]
 metabolites_long <- patient_metabolome %>%
   pivot_longer(
     cols = c(ordered_metabolites[1:10]),
-    names_to = "Gene",
+    names_to = "Metabolites",
     values_to = "Expression"
   )
 
-ggplot(metabolites_long, aes(x = Gene, y = Expression, fill = type)) +
+# Making a box plot of metabolites with most significant difference in expression between gastric cancer patients and healthy patients
+
+ggplot(metabolites_long, aes(x = Metabolites, y = Expression, fill = type)) +
   geom_boxplot(outlier.shape= NA) +
-  labs(Title = "Boxplot of metabolites", x = "Gene", y="Expression") +
+  labs(Title = "Boxplot of metabolites", x = "Metabolites", y="Expression") +
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 90, vjust =0.5, hjust = 1, size = 5)) +
-  ylim(0,3)
+  ylim(0,3)+
+  theme(plot.title = element_text(hjust = 0.5))
 
 ```
 
-Examining which metabolites are overexpressed and underexpressed in cancer patients vs healthy patients. This is calculated by taking the quotient of the average expression level of a gene for cancer patients and average expression level for normal patients (have to use the original data, not the z-transformed data)
+## Results: Identify overexpressed & underexpressed metabolites in gastic cancer patients vs healthy patients
 
-If the fold change is greater than 1.25, the metabolite is considered to be overexpressed in cancer patients and if the fold change is less than 0.75, then gene is underexpressed 
+There are certain metabolites that will be over or under expressed in cancer patients vs normal patients
+
+This is calculated by taking the quotient of the average expression level of a gene for cancer patients and average expression level for normal patients (have to use the original data, not the z-transformed data)
+
+If the fold change is greater than 1.25, the metabolite is considered to be overexpressed in cancer patients and if the fold change is less than 0.75, then gene is underexpressed
 
 There are 22 metabolites that are overexpressed and 19 metabolites that are underexpressed
 
-Relative metabolite expression values and categorical labels are added to the summary metabolite data 
+Relative metabolite expression values and categorical labels are added to the summary metabolite dataframe for further analysis
 
 ```{r}
 
@@ -229,11 +248,13 @@ healthy_metabolome_og <- original_patient_metabolome %>% filter(type == "Normal"
 
 relative_expression <- numeric() 
 
-for (col in names(patient_metabolome[numeric_columns])) {
-  mean_cancer <- mean(cancer_metabolome_og[[col]])
-  mean_healthy <- mean(healthy_metabolome_og[[col]])
-  relative_expression_difference <- mean_cancer / mean_healthy
-  relative_expression <- rbind(relative_expression,relative_expression_difference)
+for (i in 1:length(numeric_columns)) {
+  if (numeric_columns[[i]]==TRUE) {
+    mean_cancer <- mean(cancer_metabolome_og[[i]])
+    mean_healthy <- mean(healthy_metabolome_og[[i]])
+    relative_expression_difference <- mean_cancer / mean_healthy
+    relative_expression <- rbind(relative_expression,relative_expression_difference)
+  }
 }
 
 relative_expression <- as.vector(relative_expression)
@@ -262,8 +283,11 @@ print(paste0("Number of overexpressed metabolites: ",count_overexpressed))
 print(paste0("Number of underexpressed metabolites: ",count_underexpressed))
 ```
 
-Creating scatterplot of metabolites by viewing relative expression of metabolites and the statistical signifance in the difference between healthy and cancer patients
+## Results: Comparing metabolite relative expression to significance of difference in expression
 
+Creating scatterplot of metabolites by viewing relative expression of metabolites (mean cancer expression of metabolite divided by mean healthy patient expression) and the statistical significance in the difference between healthy and cancer patients
+
+Downregulated metabolites appear to be more significantly different than upregulated metabolites in cancer patients
 
 ```{r}
 
@@ -278,17 +302,18 @@ df_metabolome_summary$log_p_values <- -log10(df_metabolome_summary$p_values)
 # Creating scatterplot of metabolites based on p-value and relative expression
 
 ggplot(df_metabolome_summary, aes(x= log_relative_expression, y = log_p_values, color = Expression_status))+
-  geom_point(size=3) +
-  labs(title = "Scatter Plot of Metabolites",
+  geom_point(size=3, alpha = 0.5) +
+  labs(title = "Relative expression & significance of metabolites",
        x = "Log transformed relative cancer vs normal expression of metabolites",
        y = "Log-transformed p-values") +
-  theme_minimal()
+  theme_minimal() + 
+  theme(plot.title = element_text(hjust = 0.5))
 
 ```
 
+## Results: Identification of 10 most overexpressed metabolites
 
 Bubble plot of 10 most overexpressed metabolites in cancer vs healthy patients
-
 
 ```{r}
 
@@ -310,18 +335,156 @@ ggplot(top_expressed, aes(x = log_relative_expression, y = reorder(rownames(top_
 
 ```
 
+## Results: Evaluating mean and sd of top 10 overexpressed metabolites by stage of cancer 
 
-For top 10 overexpressed metabolites, examining if the expression varies by stage of disease. First examination is looking at the mean of expression by stage of cancer (No cancer, I, II, III, IV)
+For top 10 overexpressed metabolites, I want to explore if there is any change in expression by stage of disease. My hypothesis here is that certain overexpressed metabolites progress linearly as the disease progresses.
+
+To examine if certain metabolites are increasing with more advanced disease states, I first calculate the mean and standard deviation of the top 10 most overexpressed metabolites by stage of cancer (No cancer, I, II, III, IV)
 
 ```{r}
 
+# Split dfs by patients in different stages of cancer
+
+df_No_cancer <- subset(patient_metabolome, stage_of_disease == "_No_cancer")
+df_I <- subset(patient_metabolome, stage_of_disease == "I")
+df_II <- subset(patient_metabolome, stage_of_disease == "II")
+df_III <- subset(patient_metabolome, stage_of_disease == "III")
+df_IV <- subset(patient_metabolome, stage_of_disease == "IV")
+
+# Initializing vectors to store mean of top 10 metabolites by stage of cancer
+
+stage_No_cancer_mean <- numeric()
+stage_I_mean <- numeric()
+stage_II_mean <- numeric()
+stage_III_mean <- numeric()
+stage_IV_mean <- numeric()
+
+# Initializing vectors to store SD of top 10 metabolites by stage of cancer
+
+stage_No_cancer_sd <- numeric()
+stage_I_sd <- numeric()
+stage_II_sd <- numeric()
+stage_III_sd <- numeric()
+stage_IV_sd <- numeric()
+
+
+# Loop through the top 10 most expressed genes
+for (i in 1:10) {
+  metabolite <- row.names(top_expressed)[i]
+  
+  # Mean by cancer stage 
+  stage_No_cancer_mean <- append(stage_No_cancer_mean, mean(df_No_cancer[[metabolite]], na.rm = TRUE))
+  stage_I_mean <- append(stage_I_mean, mean(df_I[[metabolite]], na.rm = TRUE))
+  stage_II_mean <- append(stage_II_mean, mean(df_II[[metabolite]], na.rm = TRUE))
+  stage_III_mean <- append(stage_III_mean, mean(df_III[[metabolite]], na.rm = TRUE))
+  stage_IV_mean <- append(stage_IV_mean, mean(df_IV[[metabolite]], na.rm = TRUE))
+  
+  # SD by cancer stage
+
+  stage_No_cancer_sd <- append(stage_No_cancer_sd, sd(df_No_cancer[[metabolite]], na.rm = TRUE))
+  stage_I_sd <- append(stage_I_sd, sd(df_I[[metabolite]], na.rm = TRUE))
+  stage_II_sd <- append(stage_II_sd, sd(df_II[[metabolite]], na.rm = TRUE))
+  stage_III_sd <- append(stage_III_sd, sd(df_III[[metabolite]], na.rm = TRUE))
+  stage_IV_sd <- append(stage_IV_sd, sd(df_IV[[metabolite]], na.rm = TRUE))
+  
+}
+  
+# Add means and standard deviation of top 10 overexpressed metabolites to top_expressed dataframe
+
+top_expressed$stage_mean__No_cancer <- stage_No_cancer_mean
+top_expressed$stage_mean_I <- stage_I_mean
+top_expressed$stage_mean_II <- stage_II_mean
+top_expressed$stage_mean_III <- stage_III_mean
+top_expressed$stage_mean_IV <- stage_IV_mean
+
+top_expressed$stage_sd__No_cancer <- stage_No_cancer_sd
+top_expressed$stage_sd_I <- stage_I_sd
+top_expressed$stage_sd_II <- stage_II_sd
+top_expressed$stage_sd_III <- stage_III_sd
+top_expressed$stage_sd_IV <- stage_IV_sd
 
 
 ```
 
+## Results: Identifying metabolites that increase relative expression by stage of disease
+
+Creating a line chart of the top most overexpressed metabolites to see if there are any metabolites that show increased expression relative to the stage of the disease (e.g., the later staged of cancer patients have higher expression of a certain metabolite compared to earlier staged cancer patient)
+
+S.adenosyl.methionine and Sorbitol are two metabolites who's expression seems to more strongly expressed in patients in later stages of cancers vs earlier stages of cancer  
+
+```{r}
+
+# Making the rownames (which are the names of the expressed metabolites) a column in the "top_expressed" data frame
+
+top_expressed$metabolite_name <- row.names(top_expressed)
+
+#To easily make line chart, I am creating a subset of the "top_expressed" data frame to only having the mean & sd by stage of cancer and the name of the metabolites
+
+stage_cancer_top_expressed <- top_expressed[,8:18]
+
+# Reshape the data from wide format to long format
+
+top_expressed_long <- stage_cancer_top_expressed %>%
+  pivot_longer(cols = starts_with("stage_mean_"), 
+               names_to = "Stage", 
+               values_to = "Expression")
+
+# Create the line plot using ggplot2
+
+ggplot(top_expressed_long, aes(x = Stage, y = Expression, group = metabolite_name, color = metabolite_name)) +
+  geom_line(size = 0.5) +              # Line plot for each metabolite
+  geom_point(size = 0.5) +             # Add points to the lines
+  labs(title = "Metabolite Expression Levels Across Disease Stages",
+       x = "Disease Stage",
+       y = "Expression Level") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 5),
+    plot.title = element_text(hjust=0.5),
+    axis.title.x = element_text(hjust=0.5),
+    axis.title.y = element_text(hjust=0.5),
+    legend.title = element_text(size = 5),
+    legend.text = element_text(size = 5),
+    legend.spacing.y = unit(0.1, "cm") 
+  )
 
 
-Examining a heat map of the correlation (using Pearson) between metabolites. One heatmap for correlation in cancer patients and separate heatmap for healthy patients
+```
+
+## Results: Evaluating S.adenosyl.methionine by stage of cancer
+
+To further explore S.adenosyl.methionine, a metabolites who's expression seems to more strongly expressed in patients in later stages of cancers vs earlier stages of cancer, I constructed a bar chart to understand the expression change by stage of cancer
+
+Relative expression value (because all the expression of metabolites is normalized with mean 0 and sd 1) for cancer patients is negative but average expression value for all cancer patients is greater than 0. The expression of S.adenosyl.methionine is relatively in line across patients with stages I-III cancer but is 3X folds more highly expressed for patients with stage IV cancer compared to earlier staged cancers
+
+```{r}
+
+#Create dataframe with just S.adenosyl.methionine
+
+# Filter for the specific metabolite
+df_metabolite1 <- top_expressed_long %>%
+  filter(metabolite_name == "S.Adenosyl.methionine_pos.139")
+
+# Create the bar chart
+ggplot(df_metabolite1, aes(x = Stage, y = Expression)) +
+  geom_bar(stat = "identity") +  
+  labs(title = "Expression Levels of S.Adenosyl.methionine by Disease Stage",
+       x = "Disease Stage",
+       y = "Expression Level") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+## Results: Evaluating coexpression of metabolites in cancer vs healthy patients 
+Cancer cells frequently undergo metabolic reprogramming. Cancer cells often have altered metabolic pathways compared to healthy cells. This can lead to different patterns of correlations between metabolites. For example, some metabolites might be more strongly correlated in cancer patients due to shared pathways or disruptions in normal metabolic regulation
+
+I wanted to explore potential signs of reprogramming by examining the relationships between expression of metabolites comparing cancer patients to normal patients.
+
+## Results: Heatmap of coexpression of metabolites in cancer vs healthy patients
+
+In order to explore this, I examined a heat map of the correlation (using Pearson) between metabolites for cancer patients and for normal patients. One heatmap for correlation in cancer patients and separate heatmap for healthy patients
+
+The two heat maps have differences in areas where there appear to be stronger and weaker correlation between metabolites 
 
 ```{r}
 
@@ -355,12 +518,13 @@ pheatmap(cor_matrix_healthy,
 
 ```
 
+## Results: Evaluating differences in signficantly coexpressed metabolites between cancer and healthy patients
 
-From the heatmaps it seems like there are different sets of metabolites that are coorelated between the cancer patients and normal patients. 
+From the heatmaps it seems like there are different sets of metabolites that are coorelated between the cancer patients and normal patients.
 
-The hypothesis here is that in healthy individuals, metabolic pathways are well-regulated and function optimally to maintain homeostasis, and the metabolites would reflect that. In cancer patients, cancer cells typically have altered energy metabolism, such as increased glycolysis and changes in amino acid metabolism 
+The hypothesis here is that in healthy individuals, metabolic pathways are well-regulated and function optimally to maintain homeostasis, and the metabolites would reflect that. In cancer patients, cancer cells typically have altered energy metabolism, such as increased glycolysis and changes in amino acid metabolism
 
-The next test I run is looking to how many metabolite combinations yield a significant correlation in cancer patients but not in healthy patients, and vice versa 
+The next test I run is looking to how many metabolite combinations yield a significant correlation in cancer patients but not in healthy patients, and vice versa
 
 There are 3132 combination of metabolites where the correlation between two metabolites is significant for cancer patients but not for healthy patients, or vice versa
 
@@ -413,9 +577,11 @@ print(paste0("There are ", length(results_correlation), " combination of metabol
 
 ```
 
+## Results: Exploring relationship between Arginine.038 and Pyroglumatic acid.072 in cancer patients vs healthy patients 
+
 To demonstrate the difference in significance in correlation in two metabolites in cancer patients vs healthy patients, I use a scatterplot to explore the relationships of metabolites that have the highest degree of difference in p value between cancer patients and healthy patients.
 
-The two metabolites with the greatest difference in p values are Arginine.038 and Pyroglumatic acid.072. There is a significant correlation between these two metabolites for healthy patients (p value is 1.23e-16) and no significant correlation between these metabolites for cancer patients (p value is 0.99)
+The two metabolites with the greatest difference in p values between healthy and cancer patients are Arginine.038 and Pyroglumatic acid.072. There is a significant correlation between these two metabolites for healthy patients (p value is 1.23e-16) and no significant correlation between these metabolites for cancer patients (p value is 0.99)
 
 ```{r}
 
@@ -444,20 +610,27 @@ print(p_value_healthy)
 
 ggplot(patient_metabolome, aes(x= Arginine_pos.038, y = Pyroglutamic.acid_neg.072, color = type))+
   geom_point() +
-  labs(title = "Scatter Plot of Metabolites") +
+  labs(title = "Two Metabolites in Cancer vs Healthy Patients") +
   theme_minimal()+
   xlim(-2,2)+
-  ylim(-2,2)
+  ylim(-2,2)+
+  theme(plot.title = element_text(hjust=0.5))
 
 
 ```
 
+## Discussion / Future direction
+
+Based on this analysis, metabolic pathways appear to be significantly perturbed in cancer patients. There appears to be significant differences in expression of metabolites in cancer and healthy patients (96 metabolites are difficantly different), in coexpression patterns of metabolites and differences in expression by stage of cancer. 
+
+In this project, I explored the differences in metabolite expression by stage of cancer but would run significance tests and regression tests to further understand how metabolites correspond to a patient's stage of cancer 
+
+Additionally, in this analysis, I independently examine 147 metabolites. In the future, these metabolites could be annotated by their relative function. Using the Kyoto Encylopedia of Genes and Genomes metabolic pathways, metabolites can be grouped by key pathways and expression levels can be summed. Statistical tests can be run to evalaute if significant changes occur at a pathway level vs a metabolite level
 
 
-```{r}
+## Work Cited
 
-```
+Chen Y, Wang B, Zhao Y, Shao X, Wang M, Ma F, Yang L, Nie M, Jin P, Yao K, Song H, Lou S, Wang H, Yang T, Tian Y, Han P, Hu Z. Metabolomic machine learning predictor for diagnosis and prognosis of gastric cancer. Nat Commun. 2024 Feb 23;15(1):1657. doi: 10.1038/s41467-024-46043-y. 
 
 
 
-\`\`\` Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
