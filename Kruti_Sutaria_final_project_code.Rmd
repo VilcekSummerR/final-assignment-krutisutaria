@@ -1,3 +1,5 @@
+FL Note: Well done, A grade. Some things to consider in the future: providing a bit more scope of the problem and broader context in the background slides. Also when conducting comparisons of high volumes of data, such as correlation of metabolites, it is best to do some form of correction of the P value, as even a p of <0.01, we would expect at least 1 false positive in 100 comparisons. Some examples of corrections are the False Discovery Rate, FDR, and Family Wide Error Rate, FWER. 
+
 ---
 title: "Using metabolomics for diagnosis and prognosis of Gastric Cancer"
 output:
